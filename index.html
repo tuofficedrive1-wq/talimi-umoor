@@ -1,0 +1,312 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Monthly Form Prototype</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body { font-family: Arial, sans-serif; padding: 12px; max-width: 960px; margin:auto; }
+    input, select, textarea { width:100%; padding:8px; margin:6px 0; box-sizing:border-box; }
+    .row { display:flex; gap:12px; }
+    .col { flex:1; }
+    .hidden { display:none; }
+    table { width:100%; border-collapse:collapse; margin-top:8px;}
+    td, th { border:1px solid #ccc; padding:6px; text-align:left; }
+    .btn { padding:10px 14px; cursor:pointer; }
+  </style>
+</head>
+<body>
+  <h2>Monthly Form Prototype (Firebase)</h2>
+
+  <div id="auth-area">
+    <h3>Sign up</h3>
+    <div>
+      <input id="signup-uniqueid" placeholder="Unique ID (e.g. A123)" />
+      <input id="signup-name" placeholder="Name" />
+      <input id="signup-jamia" placeholder="Jamia Name" />
+      <input id="signup-resp" placeholder="Talimi Zimmedar Ka Naam" />
+      <input id="signup-password" type="password" placeholder="Password" />
+      <button id="btn-signup" class="btn">Sign Up</button>
+    </div>
+
+    <h3>Or Login</h3>
+    <div>
+      <input id="login-uniqueid" placeholder="Unique ID" />
+      <input id="login-password" type="password" placeholder="Password" />
+      <button id="btn-login" class="btn">Login</button>
+    </div>
+  </div>
+
+  <div id="app" class="hidden">
+    <div>
+      <button id="btn-logout" class="btn">Logout</button>
+      <span id="who"></span>
+    </div>
+
+    <h3>Fill Monthly Form</h3>
+    <div>
+      <div class="row">
+        <div class="col"><input id="meta-present" placeholder="Hadir (present)" type="number" /></div>
+        <div class="col"><input id="meta-absent" placeholder="Ghair hadir (absent)" type="number" /></div>
+        <div class="col"><input id="meta-year" placeholder="Year (e.g. 2025)" type="number" value="2025"/></div>
+        <div class="col">
+          <select id="meta-month">
+            <option value="1">Jan</option><option value="2">Feb</option><option value="3">Mar</option>
+            <option value="4">Apr</option><option value="5">May</option><option value="6">Jun</option>
+            <option value="7">Jul</option><option value="8" selected>Aug</option>
+            <option value="9">Sep</option><option value="10">Oct</option><option value="11">Nov</option><option value="12">Dec</option>
+          </select>
+        </div>
+      </div>
+
+      <h4>Books / Rows (example 8 rows)</h4>
+      <table id="books-table">
+        <thead>
+          <tr>
+            <th>#</th><th>Book Name</th><th>Matbua</th><th>Darja</th>
+            <th>Sep</th><th>Oct</th><th>Nov</th><th>Dec</th><th>Jan</th><th>Feb</th><th>Mar</th><th>Apr</th><th>May</th><th>Jun</th>
+          </tr>
+        </thead>
+        <tbody>
+        </tbody>
+      </table>
+      <button id="add-row" class="btn">Add Row</button>
+      <br/>
+      <button id="btn-save" class="btn">Save (Submit)</button>
+    </div>
+
+    <h3>Your Past Submissions</h3>
+    <div id="submissions"></div>
+  </div>
+
+  <!-- Firebase SDKs -->
+  <script type="module">
+    // --------------- Insert your Firebase config here ----------------
+    const firebaseConfig = {
+      apiKey: "YOUR_API_KEY",
+      authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+      projectId: "YOUR_PROJECT_ID",
+      storageBucket: "YOUR_PROJECT_ID.appspot.com",
+      messagingSenderId: "SENDER_ID",
+      appId: "APP_ID"
+    };
+    // -----------------------------------------------------------------
+
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-app.js";
+    import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-auth.js";
+    import { getFirestore, doc, setDoc, getDoc, addDoc, collection, query, where, getDocs, orderBy } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore.js";
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    // Helpers
+    function syntheticEmailFromId(id) {
+      return id.trim() + "@jamia.local";
+    }
+
+    // DOM refs
+    const signupUnique = document.getElementById('signup-uniqueid');
+    const signupName = document.getElementById('signup-name');
+    const signupJamia = document.getElementById('signup-jamia');
+    const signupResp = document.getElementById('signup-resp');
+    const signupPass = document.getElementById('signup-password');
+    const btnSignup = document.getElementById('btn-signup');
+
+    const loginUnique = document.getElementById('login-uniqueid');
+    const loginPass = document.getElementById('login-password');
+    const btnLogin = document.getElementById('btn-login');
+
+    const authArea = document.getElementById('auth-area');
+    const appArea = document.getElementById('app');
+    const who = document.getElementById('who');
+    const btnLogout = document.getElementById('btn-logout');
+
+    const addRowBtn = document.getElementById('add-row');
+    const booksTableBody = document.querySelector('#books-table tbody');
+    const btnSave = document.getElementById('btn-save');
+    const submissionsDiv = document.getElementById('submissions');
+
+    // create default 8 rows
+    function createRow(index, data={}) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${index}</td>
+        <td><input class="b-name" value="${data.bookName||''}" /></td>
+        <td><input class="b-matbua" value="${data.matbua||''}" /></td>
+        <td><input class="b-darja" value="${data.darja||''}" /></td>
+        <td><input class="m-sep" type="number" value="${(data.monthlyPages && data.monthlyPages.sep)||0}" /></td>
+        <td><input class="m-oct" type="number" value="${(data.monthlyPages && data.monthlyPages.oct)||0}" /></td>
+        <td><input class="m-nov" type="number" value="${(data.monthlyPages && data.monthlyPages.nov)||0}" /></td>
+        <td><input class="m-dec" type="number" value="${(data.monthlyPages && data.monthlyPages.dec)||0}" /></td>
+        <td><input class="m-jan" type="number" value="${(data.monthlyPages && data.monthlyPages.jan)||0}" /></td>
+        <td><input class="m-feb" type="number" value="${(data.monthlyPages && data.monthlyPages.feb)||0}" /></td>
+        <td><input class="m-mar" type="number" value="${(data.monthlyPages && data.monthlyPages.mar)||0}" /></td>
+        <td><input class="m-apr" type="number" value="${(data.monthlyPages && data.monthlyPages.apr)||0}" /></td>
+        <td><input class="m-may" type="number" value="${(data.monthlyPages && data.monthlyPages.may)||0}" /></td>
+        <td><input class="m-jun" type="number" value="${(data.monthlyPages && data.monthlyPages.jun)||0}" /></td>
+      `;
+      booksTableBody.appendChild(tr);
+    }
+
+    for(let i=1;i<=8;i++) createRow(i);
+
+    addRowBtn.onclick = () => {
+      createRow(booksTableBody.children.length + 1);
+    };
+
+    // Signup
+    btnSignup.onclick = async () => {
+      try {
+        const uidVal = signupUnique.value.trim();
+        const nameVal = signupName.value.trim();
+        const jamiaVal = signupJamia.value.trim();
+        const respVal = signupResp.value.trim();
+        const passVal = signupPass.value;
+
+        if(!uidVal || !nameVal || !passVal) return alert('Unique ID, name and password required.');
+
+        const email = syntheticEmailFromId(uidVal);
+        const userCred = await createUserWithEmailAndPassword(auth, email, passVal);
+
+        // store profile in users collection
+        await setDoc(doc(db, 'users', userCred.user.uid), {
+          uid: userCred.user.uid,
+          uniqueId: uidVal,
+          name: nameVal,
+          jamiaName: jamiaVal,
+          responsibleName: respVal,
+          emailSynthetic: email,
+          role: 'user',
+          createdAt: new Date()
+        });
+
+        alert('Signed up and profile saved. Now logged in.');
+        onAuthChange(userCred.user);
+      } catch (e) {
+        console.error(e);
+        alert('Error: ' + e.message);
+      }
+    };
+
+    // Login
+    btnLogin.onclick = async () => {
+      try {
+        const uidVal = loginUnique.value.trim();
+        const passVal = loginPass.value;
+        if(!uidVal || !passVal) return alert('Unique ID and password required.');
+
+        const email = syntheticEmailFromId(uidVal);
+        const u = await signInWithEmailAndPassword(auth, email, passVal);
+        onAuthChange(u.user);
+      } catch (e) {
+        console.error(e);
+        alert('Login error: ' + e.message);
+      }
+    };
+
+    // Logout
+    btnLogout.onclick = async () => {
+      await signOut(auth);
+      location.reload();
+    };
+
+    // on auth
+    async function onAuthChange(user) {
+      authArea.classList.add('hidden');
+      appArea.classList.remove('hidden');
+      const ud = await getDoc(doc(db, 'users', user.uid));
+      const profile = ud.exists() ? ud.data() : {name: user.email};
+      who.innerText = `Logged in: ${profile.name} (${profile.uniqueId || ''})`;
+      loadSubmissions(user.uid);
+    }
+
+    // load submissions
+    async function loadSubmissions(uid) {
+      submissionsDiv.innerHTML = 'Loading...';
+      const q = query(collection(db, 'monthly_forms'), where('userId','==',uid), orderBy('createdAt','desc'));
+      const snap = await getDocs(q);
+      if(snap.empty) {
+        submissionsDiv.innerText = 'No submissions yet.';
+        return;
+      }
+      submissionsDiv.innerHTML = '';
+      snap.forEach(docSnap => {
+        const d = docSnap.data();
+        const el = document.createElement('div');
+        el.style.border = '1px solid #ddd'; el.style.padding = '8px'; el.style.marginTop = '6px';
+        el.innerHTML = `<b>${d.formType} — ${d.month}/${d.year}</b><div>Submitted: ${d.createdAt?.toDate ? d.createdAt.toDate() : d.createdAt}</div>
+          <pre style="white-space:pre-wrap">${JSON.stringify(d.formData, null, 2)}</pre>`;
+        submissionsDiv.appendChild(el);
+      });
+    }
+
+    // Save form
+    btnSave.onclick = async () => {
+      try {
+        const user = auth.currentUser;
+        if(!user) return alert('Not logged in');
+
+        // collect meta
+        const meta = {
+          present: Number(document.getElementById('meta-present').value || 0),
+          absent: Number(document.getElementById('meta-absent').value || 0),
+          year: Number(document.getElementById('meta-year').value || new Date().getFullYear()),
+          month: Number(document.getElementById('meta-month').value || (new Date().getMonth()+1))
+        };
+
+        const books = [];
+        Array.from(booksTableBody.children).forEach((tr, idx) => {
+          const book = {
+            serial: idx+1,
+            bookName: tr.querySelector('.b-name').value,
+            matbua: tr.querySelector('.b-matbua').value,
+            darja: tr.querySelector('.b-darja').value,
+            monthlyPages: {
+              sep: Number(tr.querySelector('.m-sep').value || 0),
+              oct: Number(tr.querySelector('.m-oct').value || 0),
+              nov: Number(tr.querySelector('.m-nov').value || 0),
+              dec: Number(tr.querySelector('.m-dec').value || 0),
+              jan: Number(tr.querySelector('.m-jan').value || 0),
+              feb: Number(tr.querySelector('.m-feb').value || 0),
+              mar: Number(tr.querySelector('.m-mar').value || 0),
+              apr: Number(tr.querySelector('.m-apr').value || 0),
+              may: Number(tr.querySelector('.m-may').value || 0),
+              jun: Number(tr.querySelector('.m-jun').value || 0)
+            }
+          };
+          books.push(book);
+        });
+
+        const formDoc = {
+          userId: user.uid,
+          uniqueId: (await getDoc(doc(db,'users', user.uid))).data().uniqueId,
+          year: meta.year,
+          month: meta.month,
+          formType: 'monthly_teacher_form_v1',
+          formData: {
+            meta,
+            books
+          },
+          status: 'submitted',
+          createdAt: new Date()
+        };
+
+        await addDoc(collection(db, 'monthly_forms'), formDoc);
+        alert('Form submitted.');
+        loadSubmissions(user.uid);
+      } catch (e) {
+        console.error(e);
+        alert('Save error: ' + e.message);
+      }
+    };
+
+    // check auth on load
+    import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-auth.js";
+    onAuthStateChanged(auth, async (user) => {
+      if(user) onAuthChange(user);
+    });
+
+  </script>
+</body>
+</html>
